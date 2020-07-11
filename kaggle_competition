@@ -1,1 +1,224 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+housing=pd.read_csv("train.csv")
+test=pd.read_csv("test.csv")
+
+housing=housing.dropna(axis=1,how='any',thresh=500)
+test=test.dropna(axis=1,how='any',thresh=500)
+
+#info=pd.DataFrame(housing.info())
+describe=pd.DataFrame(housing.describe())
+describe.to_csv("describe.csv")
+                                # creating test train set
+housing.drop(["Id"], axis=1, inplace=True)
+
+from sklearn.model_selection import train_test_split
+train_set,test_set=train_test_split(housing,test_size=0.1,random_state=42)
+
+# check out feature and cut out
+# for x in train_set.select_dtypes(include=['object']):
+#     print(train_set[x].value_counts())
+#     print('###########################')
+
+
+
+#                                   VISUALization
+
+housing=train_set.copy()
+corr_matrix=housing.corr()
+print(corr_matrix['SalePrice'].sort_values(ascending=False))
+
+#                                       PREPARE DATA FOR MODELING
+
+
+housing.drop("SalePrice",axis=1,inplace=True)
+housing_label=train_set["SalePrice"].copy()
+
+
+#  Fillup text missing values
+def fillup_text(housing):
+    from sklearn.impute import SimpleImputer
+    imputer = SimpleImputer(strategy="most_frequent")
+
+    housing_num = housing.select_dtypes(include=['object'])  # because it has text value
+    print(housing_num.info())
+    imputer.fit(housing_num)
+
+    # print(imputer.statistics_)
+    X = imputer.transform(housing_num)  # Result is a plain Numpy array containing the transformed features
+    housing_tr = pd.DataFrame(X,columns=housing_num.columns, index=housing.index)
+
+#    overwrite columns
+    columns_to_overwrite = housing_tr.columns.tolist()
+    housing.drop(labels=columns_to_overwrite, axis="columns", inplace=True)
+    housing[columns_to_overwrite] = housing_tr[columns_to_overwrite]
+    return housing
+
+housing_text_impute=fillup_text(housing)
+
+housing=housing_text_impute
+
+##  CONVERT TEXT TO INTEGER USING GET DUMMIES
+def dummies(housing):
+    housing=pd.get_dummies(housing,prefix_sep='_',drop_first=True)
+    return housing
+
+housing_encoded=dummies(housing_text_impute)
+
+
+
+#handles missing data
+def missing_data(housing_encoded,housing):
+    from sklearn.impute import SimpleImputer
+    imputer2 = SimpleImputer(strategy="median")
+
+    # housing_num=housing.drop("ocean_proximity",axis=1) # because it has text value
+    imputer2.fit(housing_encoded)
+
+    # print(imputer.statistics_)
+    X = imputer2.transform(housing_encoded)  # Result is a plain Numpy array containing the transformed features
+    housing_prepared = pd.DataFrame(X,columns=housing_encoded.columns, index=housing.index)  # Put it back into a Pandas DataFrame
+    return housing_prepared
+
+housing_prepared=missing_data(housing_encoded,housing)
+#
+
+# PREPOCESSING
+
+def processing(housing_prepared):
+    from sklearn.preprocessing import StandardScaler
+    scaled_features = StandardScaler().fit_transform(housing_prepared.values)
+    scaled_housing=pd.DataFrame(scaled_features,index=housing_prepared.index,columns=housing_prepared.columns)
+
+    return scaled_housing
+
+housing_final=processing(housing_prepared)
+print("$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
+print(housing_final)
+
+housing_prepared=housing_final
+
+#                                      TRAIN A MODEL
+info=pd.DataFrame(housing_prepared.info())
+from sklearn.metrics import mean_squared_error
+from sklearn.model_selection import cross_val_score
+#
+from sklearn import ensemble
+clf = ensemble.GradientBoostingRegressor(n_estimators = 400, max_depth = 5, min_samples_split = 2,
+          learning_rate = 0.1, loss = 'ls')
+clf.fit(housing_prepared,housing_label)
+
+
+
+# from sklearn.linear_model import LinearRegression
+# lin_reg=LinearRegression()
+# lin_reg.fit(housing_final,housing_label)
+#
+# from sklearn.metrics import mean_squared_error
+# housing_predictions = lin_reg.predict(housing_final)
+# lin_mse=mean_squared_error(housing_label,housing_predictions)
+# lin_mse=np.sqrt(lin_mse)
+# print(lin_mse)
+
+#
+# scores=cross_val_score(lin_reg,housing_prepared,housing_label,scoring="neg_mean_squared_error",cv=10)
+# rmse_scores=np.sqrt(-scores)
+
+def display_scores(scores):
+    print("Scores:", scores)
+    print("Mean:", scores.mean())
+    print("Standard deviation:", scores.std())
+#display_scores(rmse_scores)
+
+#lets make a bar-graph function of pred vs actual
+def bar_graph(pred,y):
+    from pylab import text
+    df=pd.DataFrame({'Actual':y,'Predicted:':pred})
+    df1=df.head(25)
+    df1.plot(kind='bar',figsize=(16,10))
+    plt.grid(which='major',linestyle='-',linewidth='0.5',color='green')
+    plt.grid(which='minor', linestyle=':', linewidth='0.5', color='black')
+
+    plt.show()
+
+
+# lets check on randomforest
+attribs=housing_prepared.columns.tolist()
+
+
+
+# ON TEST_SET
+
+
+y_test=test_set["SalePrice"].copy()
+test_set.drop("SalePrice",axis=1, inplace=True)
+
+housing_text_impute=fillup_text(test_set)
+housing_test=housing_text_impute
+housing_encoded_test=dummies(test_set)
+housing_all_impute=missing_data(housing_encoded_test,housing_test)
+X_test_prepared=processing(housing_all_impute)
+
+attribs_test=X_test_prepared.columns.tolist()
+
+diff=list(set(attribs)-set(attribs_test))
+
+print('##################')
+X_test_prepared=X_test_prepared[list(set(attribs_test)&set(attribs))]  #215
+for col in diff:
+    X_test_prepared[col]=0.0 #234...same size as train set
+ # repositioning appended 0 value collumns
+X_test_prepared=X_test_prepared[attribs]
+print(X_test_prepared)
+
+predictions = clf.predict(X_test_prepared)
+mse = mean_squared_error(y_test,predictions)
+rmse = np.sqrt(mse) # => evaluates to 48,209.6
+print(rmse)  #44683
+bar_graph(predictions,y_test)
+
+
+print(clf.score(X_test_prepared,y_test))
+#          ON KAGGLE SET
+#
+test_id=test["Id"].copy()
+test.drop("Id",axis=1, inplace=True)
+
+housing_text_impute=fillup_text(test)
+housing_test=housing_text_impute
+housing_encoded_test=dummies(housing_test)
+housing_all_impute=missing_data(housing_encoded_test,housing_test)
+X_test_prepared=processing(housing_all_impute)
+
+attribs_test=X_test_prepared.columns.tolist()
+
+try:
+    diff=list(set(attribs)-set(attribs_test))
+except:
+    diff=list(set(attribs_test)-set(attribs))
+# print(attribs)
+# print(len(attribs))
+# print(attribs_test)
+# print(len(attribs_test))
+# print(diff)
+# print(len(diff))
+# print(len(list(set(attribs_test)&set(attribs))))
+print('##################')
+X_test_prepared=X_test_prepared[list(set(attribs_test)&set(attribs))]  #215
+for col in diff:
+    X_test_prepared[col]=0.0 #234...same size as train set
+ # repositioning appended 0 value collumns
+X_test_prepared=X_test_prepared[attribs]
+print(X_test_prepared)
+
+final_predictions = clf.predict(X_test_prepared)
+# creating submission file
+
+d={'Id':test_id,
+   'SalePrice':final_predictions}
+
+df1=pd.DataFrame(d)
+df1.to_csv("final_submission_ensemble_error_25981.csv",index=False)
 
